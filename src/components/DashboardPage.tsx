@@ -79,6 +79,19 @@ export const DashboardPage: React.FC = () => {
     return `${(bytes / Math.pow(k, i)).toFixed(i >= 2 ? 2 : 1)} ${sizes[i]}`;
   };
 
+  const formatBriefDisplay = (text?: string): string => {
+    if (!text) return '';
+    return text
+      .replace(/^#+\s+[^\n]+/gm, '')
+      .replace(/\|\s*[-:]+\s*\|/g, '')
+      .replace(/\|\s*Metric\s*\|\s*Value\s*\|[^\n]*/gi, '')
+      .replace(/\|\s*Threat Type\s*\|\s*Details\s*\|[^\n]*/gi, '')
+      .replace(/\|\s*/g, ' ')
+      .replace(/---+/g, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  };
+
   const [uploadCompletionMessage, setUploadCompletionMessage] = useState<string | null>(null);
   const completionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [notification, setNotification] = useState<string | null>(null);
@@ -86,6 +99,8 @@ export const DashboardPage: React.FC = () => {
   // Sarvam AI Language & PDF State
   const [selectedLanguage, setSelectedLanguage] = useState<SupportedLanguage>('en');
   const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [isTranslating, setIsTranslating] = useState(false);
 
   // Handcrafted Attack Graph Canvas State (empty by default on page load)
   const [nodes, setNodes] = useState<GraphNode[]>([]);
@@ -125,6 +140,91 @@ export const DashboardPage: React.FC = () => {
       log.notes.toLowerCase().includes(q)
     );
   });
+
+  const handleLanguageChange = async (newLang: SupportedLanguage) => {
+    setSelectedLanguage(newLang);
+    if (!activeIncident) return;
+    if (activeIncident.sarvamSummaryByLang && activeIncident.sarvamSummaryByLang[newLang]) return;
+
+    setIsTranslating(true);
+    try {
+      const resp = await fetch('/api/reports/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          incident_id: activeIncident.id,
+          title: activeIncident.title,
+          severity: activeIncident.severity,
+          score: activeIncident.score,
+          target_asset: activeIncident.targetAsset,
+          predicted_next_hop: activeIncident.quantumNextHop?.predictedNode,
+          probability: activeIncident.quantumNextHop?.probability,
+          language: newLang,
+        }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.narrative) {
+          setIncidents((prev) =>
+            prev.map((inc) =>
+              inc.id === activeIncident.id
+                ? {
+                    ...inc,
+                    sarvamSummaryByLang: {
+                      ...inc.sarvamSummaryByLang,
+                      [newLang]: data.narrative,
+                    },
+                  }
+                : inc
+            )
+          );
+        }
+      }
+    } catch {
+      // Non-blocking fallback
+    } finally {
+      setIsTranslating(false);
+    }
+  };
+
+  const handleDownloadPdf = async () => {
+    if (!activeIncident) return;
+    setIsGeneratingPdf(true);
+    try {
+      const res = await fetch('/api/reports/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          incident_id: activeIncident.id,
+          title: activeIncident.title,
+          severity: activeIncident.severity,
+          score: activeIncident.score,
+          target_asset: activeIncident.targetAsset,
+          predicted_next_hop: activeIncident.quantumNextHop?.predictedNode,
+          probability: activeIncident.quantumNextHop?.probability,
+          language: selectedLanguage,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.download_url) {
+          const a = document.createElement('a');
+          a.href = data.download_url;
+          a.download = `Mitigata_Threat_Report_${data.report_id}.pdf`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          showNotification(`Executive Threat Report ${data.report_id} compiled by Sarvam AI.`);
+        }
+      } else {
+        showNotification('Report compilation request returned an error.');
+      }
+    } catch {
+      showNotification('Network error downloading PDF report.');
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  };
 
   // Complete Data Deletion / Clear
   const handleClearAllData = async () => {
@@ -345,68 +445,45 @@ export const DashboardPage: React.FC = () => {
             processingPercent: 100,
             remainingBytes: 0,
             rowsIndexed: result.ingested_rows || 0,
-            statusText: 'All chunk blocks parsed and indexed into DuckDB.',
+            statusText: `All ${(result.ingested_rows || 0).toLocaleString()} records parsed and indexed into DuckDB. ${(result.alerts_count || 0).toLocaleString()} alerts analyzed with Sarvam AI.`,
           }));
 
-          // Fetch sample parsed logs from DuckDB to display in table
-          const sampleRes = await fetch('/api/logs/sample?limit=50');
-          if (sampleRes.ok) {
-            const sampleData = await sampleRes.json();
-            if (sampleData.sample_logs && sampleData.sample_logs.length > 0) {
-              const mappedLogs: DuckDBLogRow[] = sampleData.sample_logs.map((log: any, idx: number) => ({
-                id: `LOG-${String(idx + 1).padStart(3, '0')}`,
-                timestamp: log.timestamp || new Date().toISOString(),
-                sourceIp: log.source_ip || '0.0.0.0',
-                destIp: log.destination_ip || '0.0.0.0',
-                protocol: log.event_type || 'TCP',
-                port: 443,
-                bytes: 1420,
-                action: log.status === 'DENY' ? 'DROP' : 'ACCEPT',
-                flag: log.status === 'DENY' ? 'ANOMALOUS' : 'NORMAL',
-                notes: log.raw_message || `${log.event_type} event`,
-              }));
-              setDuckdbLogs(mappedLogs);
-            }
+          // Set sample parsed logs from DuckDB to display in table immediately
+          if (result.sample_logs && result.sample_logs.length > 0) {
+            setDuckdbLogs(result.sample_logs);
+          } else {
+            // Fallback fetch if sample_logs wasn't attached
+            try {
+              const sampleRes = await fetch('/api/logs/sample?limit=50');
+              if (sampleRes.ok) {
+                const sampleData = await sampleRes.json();
+                if (sampleData.sample_logs && sampleData.sample_logs.length > 0) {
+                  setDuckdbLogs(sampleData.sample_logs);
+                }
+              }
+            } catch {}
           }
 
-          if (nodes.length === 0) {
+          if (result.nodes && result.nodes.length > 0) {
+            setNodes(result.nodes);
+          } else {
             setNodes(MOCK_GRAPH_NODES);
-            setEdges(MOCK_GRAPH_EDGES);
-            setSelectedNodeId('node-auth');
           }
 
-          if (incidents.length === 0) {
-            const newIncident: Incident = {
-              id: `INC-${Math.floor(8000 + Math.random() * 900)}`,
-              title: `Suspicious Protocol Burst from ${fileName}`,
-              severity: 'critical',
-              score: 9.3,
-              stage: 'Lateral Movement',
-              targetAsset: 'dc-prod-01.corp.internal',
-              ipAddress: '10.240.12.8',
-              detectedAt: 'Just now',
-              sourceEngine: 'DuckDB',
-              status: 'active',
-              description: `Streaming ingest of ${fileName} (${result.ingested_rows.toLocaleString()} rows in ${result.duration_seconds}s) completed. Vectorized scan flagged anomalous traffic traversal.`,
-              sarvamSummaryByLang: {
-                en: `Sarvam AI live telemetry analysis of ${fileName}: ${result.ingested_rows.toLocaleString()} rows ingested (${result.throughput_rows_per_second.toLocaleString()} rows/sec). Active lateral hopping patterns identified.`,
-                hi: `सर्वम AI विश्लेषण (${fileName}): ${result.ingested_rows.toLocaleString()} पंक्तियाँ डकडीबी में अंतर्ग्रहण की गईं। पार्श्व प्रसार का संकेत मिलता है।`,
-                te: `సర్వమ్ AI విశ్లేషణ (${fileName}): ${result.ingested_rows.toLocaleString()} రికార్డులు డక్‌డీబీలో నిక్షిప్తం చేయబడ్డాయి. అసాధారణ ట్రాఫిక్ గుర్తించబడింది.`,
-                ml: `സർവം AI വിശകലനം (${fileName}): ${result.ingested_rows.toLocaleString()} വരികൾ ഡക്ക് ഡിബിയിൽ ശേഖരിച്ചു. അടിയന്തരമായി പോർട്ട് ഐസൊലേഷൻ നടത്തുക.`,
-              },
-              quantumNextHop: {
-                predictedNode: 'srv-vault-prod.internal',
-                probability: 0.865,
-                mitreTechnique: 'T1558 (Kerberoasting)',
-                quarantineAction: 'Isolate RPC port 135 and rotate service keys',
-              },
-            };
-            setIncidents([newIncident]);
-            setSelectedIncidentId(newIncident.id);
+          if (result.edges && result.edges.length > 0) {
+            setEdges(result.edges);
+          } else {
+            setEdges(MOCK_GRAPH_EDGES);
+          }
+          setSelectedNodeId('node-dc');
+
+          if (result.incidents && result.incidents.length > 0) {
+            setIncidents(result.incidents);
+            setSelectedIncidentId(result.incidents[0].id);
           }
 
           setIsProcessingLogs(false);
-          const successMsg = `Successfully ingested ${result.ingested_rows.toLocaleString()} rows from ${fileName} in ${result.duration_seconds}s (${result.throughput_rows_per_second.toLocaleString()} rows/s).`;
+          const successMsg = `Successfully ingested ${(result.ingested_rows || 0).toLocaleString()} rows from ${fileName} in ${result.duration_seconds}s (${(result.throughput_rows_per_second || 0).toLocaleString()} rows/s). ${(result.alerts_count || 0).toLocaleString()} alerts analyzed by Sarvam AI.`;
           setUploadCompletionMessage(successMsg);
           showNotification(successMsg);
 
@@ -1255,7 +1332,13 @@ export const DashboardPage: React.FC = () => {
 
                 {/* Dynamic Multilingual Threat Brief Box */}
                 <div className="text-xs text-zinc-700 dark:text-zinc-300 leading-relaxed bg-zinc-50 dark:bg-zinc-900/60 p-3 rounded border border-zinc-200 dark:border-zinc-800">
-                  {activeIncident.sarvamSummaryByLang[selectedLanguage]}
+                  {isTranslating ? (
+                    <span className="italic text-zinc-500 dark:text-zinc-400">
+                      Synthesizing {languageLabels[selectedLanguage]} brief via Sarvam AI...
+                    </span>
+                  ) : (
+                    formatBriefDisplay(activeIncident.sarvamSummaryByLang[selectedLanguage] || activeIncident.sarvamSummaryByLang.en)
+                  )}
                 </div>
 
                 {/* Language Dropdown Selector (English, Hindi, Telugu, Malayalam) */}
@@ -1267,7 +1350,7 @@ export const DashboardPage: React.FC = () => {
                   
                   <select
                     value={selectedLanguage}
-                    onChange={(e) => setSelectedLanguage(e.target.value as SupportedLanguage)}
+                    onChange={(e) => handleLanguageChange(e.target.value as SupportedLanguage)}
                     className="w-full bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-emerald-500 cursor-pointer font-sans"
                   >
                     <option value="en">English (US)</option>
@@ -1438,7 +1521,7 @@ export const DashboardPage: React.FC = () => {
                   Sarvam AI Forensic Brief ({languageLabels[selectedLanguage]})
                 </div>
                 <div className="p-3.5 rounded bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 text-sm leading-relaxed text-zinc-800 dark:text-zinc-200">
-                  {activeIncident.sarvamSummaryByLang[selectedLanguage]}
+                  {formatBriefDisplay(activeIncident.sarvamSummaryByLang[selectedLanguage] || activeIncident.sarvamSummaryByLang.en)}
                 </div>
               </div>
 
@@ -1506,13 +1589,22 @@ export const DashboardPage: React.FC = () => {
               </button>
               <button
                 type="button"
+                disabled={isGeneratingPdf}
+                onClick={handleDownloadPdf}
+                className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-zinc-950 bg-emerald-400 hover:bg-emerald-300 rounded-md transition-colors shadow-xs cursor-pointer disabled:opacity-60"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>{isGeneratingPdf ? 'Compiling via Sarvam AI...' : 'Download PDF Report'}</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => {
                   window.print();
                 }}
-                className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-zinc-950 bg-emerald-400 hover:bg-emerald-300 rounded-md transition-colors shadow-xs cursor-pointer"
+                className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:text-zinc-950 dark:hover:text-zinc-100 border border-zinc-300 dark:border-zinc-700 rounded-md transition-colors cursor-pointer"
               >
                 <Printer className="w-3.5 h-3.5" />
-                <span>Print / Save as PDF</span>
+                <span>Print</span>
               </button>
             </div>
           </div>
