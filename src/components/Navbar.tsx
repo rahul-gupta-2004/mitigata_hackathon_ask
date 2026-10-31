@@ -18,20 +18,16 @@ export const Navbar: React.FC<NavbarProps> = ({
   return (
     <header className="sticky top-0 z-50 w-full border-b border-zinc-200 dark:border-zinc-800/80 bg-white/90 dark:bg-zinc-950/90 backdrop-blur-md transition-colors">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-8">
-        {/* Zone 1: Brand wordmark */}
+        {/* Zone 1: Brand wordmark & Logo */}
         <button
           onClick={() => onNavigate('landing')}
           className="flex items-center gap-2.5 text-left group focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 rounded-md shrink-0 cursor-pointer"
         >
-          <div className="w-8 h-8 rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-900 flex items-center justify-center text-emerald-600 dark:text-emerald-400 group-hover:border-emerald-500/60 transition-colors">
-            <svg
-              className="w-4 h-4 fill-current"
-              viewBox="0 0 24 24"
-              aria-hidden="true"
-            >
-              <path d="M12 2L4 6v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V6l-8-4zm0 2.2l6 3v4.8c0 4.41-3.04 8.52-6 9.77-2.96-1.25-6-5.36-6-9.77V7.2l6-3zm-1 5.8v6h2v-6h-2z" />
-            </svg>
-          </div>
+          <img
+            src="/logo.png"
+            alt="ASK Logo"
+            className="w-8 h-8 rounded object-contain border border-zinc-200 dark:border-zinc-700 bg-white"
+          />
           <span className="text-base font-bold tracking-tight text-zinc-900 dark:text-zinc-100 font-sans whitespace-nowrap">
             Mitigata
           </span>
