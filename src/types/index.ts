@@ -9,7 +9,7 @@ export interface DuckDBLogRow {
   timestamp: string;
   sourceIp: string;
   destIp: string;
-  protocol: 'TCP' | 'UDP' | 'ICMP' | 'RPC' | 'LDAP';
+  protocol: string;
   port: number;
   bytes: number;
   action: 'ACCEPT' | 'REJECT';

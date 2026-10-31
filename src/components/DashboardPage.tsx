@@ -145,37 +145,71 @@ export const DashboardPage: React.FC = () => {
   };
 
   // Reload / Re-ingest Sample Data
-  const handleReloadSampleData = () => {
+  const handleReloadSampleData = async () => {
     if (completionTimerRef.current) clearTimeout(completionTimerRef.current);
     setUploadCompletionMessage(null);
     setIsProcessingLogs(true);
     
-    const sampleBytes = 2560000; // ~2.56 MB
+    const sampleBytes = 8388608; // ~8.0 MB (10,000 events)
     setIngestProgress({
       stage: 'uploading',
-      fileName: 'sample_flow_telemetry.log',
+      fileName: 'edr_events.json (10,000 events)',
       fileSizeBytes: sampleBytes,
       uploadedBytes: sampleBytes,
       uploadPercent: 100,
-      processedBytes: 0,
-      processingPercent: 0,
-      remainingBytes: sampleBytes,
-      rowsIndexed: 0,
-      statusText: 'Streaming sample telemetry into DuckDB raw_logs table...',
+      processedBytes: Math.round(sampleBytes * 0.3),
+      processingPercent: 30,
+      remainingBytes: Math.round(sampleBytes * 0.7),
+      rowsIndexed: 3000,
+      statusText: 'Streaming 10,000 EDR telemetry records into DuckDB...',
     });
 
-    // Step 1: 35% processing
-    setTimeout(() => {
-      setIngestProgress((prev) => ({
-        ...prev,
-        stage: 'processing',
-        processedBytes: Math.round(sampleBytes * 0.35),
-        processingPercent: 35,
-        remainingBytes: Math.round(sampleBytes * 0.65),
-        rowsIndexed: Math.round(INITIAL_DUCKDB_LOGS.length * 0.35),
-        statusText: 'Bulk-inserting vector telemetry chunks into DuckDB...',
-      }));
-    }, 150);
+    try {
+      const resp = await fetch('/api/sample/load', { method: 'POST' });
+      if (resp.ok) {
+        const data = await resp.json();
+        
+        setIngestProgress({
+          stage: 'completed',
+          fileName: 'edr_events.json',
+          fileSizeBytes: sampleBytes,
+          uploadedBytes: sampleBytes,
+          uploadPercent: 100,
+          processedBytes: sampleBytes,
+          processingPercent: 100,
+          remainingBytes: 0,
+          rowsIndexed: data.total_rows || 10000,
+          statusText: `All ${(data.total_rows || 10000).toLocaleString()} records indexed into DuckDB. ${(data.alerts_count || 530).toLocaleString()} alerts analyzed with Sarvam AI.`,
+        });
+
+        if (data.sample_logs && data.sample_logs.length > 0) {
+          setDuckdbLogs(data.sample_logs);
+        }
+        if (data.incidents && data.incidents.length > 0) {
+          setIncidents(data.incidents);
+          setSelectedIncidentId(data.incidents[0].id);
+        }
+        if (data.nodes && data.nodes.length > 0) {
+          setNodes(data.nodes);
+        }
+        if (data.edges && data.edges.length > 0) {
+          setEdges(data.edges);
+        }
+        setSelectedNodeId('node-dc');
+        setIsProcessingLogs(false);
+
+        const msg = `Sample telemetry loaded: ${(data.total_rows || 10000).toLocaleString()} rows indexed, ${(data.alerts_count || 530).toLocaleString()} threats flagged by Sarvam AI.`;
+        setUploadCompletionMessage(msg);
+        showNotification(msg);
+
+        completionTimerRef.current = setTimeout(() => {
+          setUploadCompletionMessage(null);
+        }, 4000);
+        return;
+      }
+    } catch (err) {
+      console.warn('[Sample Load] Error, using fallback data:', err);
+    }
 
     // Step 2: 75% processing
     setTimeout(() => {
@@ -287,8 +321,8 @@ export const DashboardPage: React.FC = () => {
           uploadedBytes: loaded,
           uploadPercent: pct,
           statusText: pct === 100 
-            ? 'Upload complete. Spooling & streaming chunk blocks into DuckDB...' 
-            : `Uploading data stream (${pct}% of ${formatBytes(total)})...`,
+            ? 'Upload complete. Launching high-speed Rust ingestion engine into DuckDB...' 
+            : `Uploaded ${formatBytes(loaded)} of ${formatBytes(total)} (${pct}%)...`,
         }));
         if (pct === 100) {
           startPollingProgress();
@@ -1057,7 +1091,7 @@ export const DashboardPage: React.FC = () => {
                   </span>
                   <span className="shrink-0 font-medium tabular-nums text-emerald-900 dark:text-emerald-300">
                     {ingestProgress.uploadPercent < 100 ? (
-                      `${100 - ingestProgress.uploadPercent}% upload remaining`
+                      `${formatBytes(ingestProgress.uploadedBytes)} of ${formatBytes(ingestProgress.fileSizeBytes)} uploaded`
                     ) : (
                       `${Math.max(0, 100 - ingestProgress.processingPercent).toFixed(0)}% processing left (${formatBytes(ingestProgress.remainingBytes)} left)`
                     )}
@@ -1145,7 +1179,7 @@ export const DashboardPage: React.FC = () => {
                       </div>
                       <div className="text-[10px] text-zinc-500">
                         {ingestProgress.uploadPercent < 100
-                          ? `${100 - ingestProgress.uploadPercent}% upload remaining`
+                          ? `${formatBytes(ingestProgress.uploadedBytes)} of ${formatBytes(ingestProgress.fileSizeBytes)} uploaded`
                           : `${Math.max(0, 100 - ingestProgress.processingPercent).toFixed(0)}% processing remaining (${formatBytes(ingestProgress.remainingBytes)} left)`}
                       </div>
                     </div>

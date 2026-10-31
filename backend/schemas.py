@@ -1,6 +1,6 @@
 from typing import List, Optional
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 class LogRecord(BaseModel):
     timestamp: Optional[datetime] = None

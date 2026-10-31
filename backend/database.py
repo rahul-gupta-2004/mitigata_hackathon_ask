@@ -49,7 +49,6 @@ def get_health_stats() -> Dict[str, Any]:
     db_size = os.path.getsize(DATABASE_FILE) if os.path.exists(DATABASE_FILE) else 0
     db_size_mb = round(db_size / (1024 * 1024), 2)
     
-    # Read process RSS memory from /proc/self/status on Linux
     process_memory_mb = 0.0
     try:
         with open("/proc/self/status", "r") as f:
@@ -120,7 +119,6 @@ def bulk_insert_rows(rows: List[tuple]) -> int:
 def bulk_insert_from_parquet_or_csv(file_path: str, format_type: str) -> int:
     """
     Directly ingests a file using DuckDB's vectorized native C++ engine.
-    This provides maximum throughput (millions of rows/sec) without converting to Python objects.
     """
     conn = get_db_connection()
     with _db_lock:
