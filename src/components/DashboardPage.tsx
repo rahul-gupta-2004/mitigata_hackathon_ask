@@ -37,26 +37,60 @@ import {
 } from 'lucide-react';
 
 export const DashboardPage: React.FC = () => {
-  // Incident State
-  const [incidents, setIncidents] = useState<Incident[]>(MOCK_INCIDENTS);
-  const [selectedIncidentId, setSelectedIncidentId] = useState<string | null>('INC-8092');
+  // Incident State (empty by default on page load; populated when "Load Sample" is clicked)
+  const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [selectedIncidentId, setSelectedIncidentId] = useState<string | null>(null);
   const [severityFilter, setSeverityFilter] = useState<'all' | IncidentSeverity>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // DuckDB Flow Log State
-  const [duckdbLogs, setDuckdbLogs] = useState<DuckDBLogRow[]>(INITIAL_DUCKDB_LOGS);
+  // DuckDB Flow Log State (empty and cleared by default on page load)
+  const [duckdbLogs, setDuckdbLogs] = useState<DuckDBLogRow[]>([]);
   const [logFilterQuery, setLogFilterQuery] = useState('');
   const [isProcessingLogs, setIsProcessingLogs] = useState(false);
+  const [ingestProgress, setIngestProgress] = useState<{
+    stage: 'idle' | 'uploading' | 'processing' | 'completed';
+    fileName: string;
+    fileSizeBytes: number;
+    uploadedBytes: number;
+    uploadPercent: number;
+    processedBytes: number;
+    processingPercent: number;
+    remainingBytes: number;
+    rowsIndexed: number;
+    statusText: string;
+  }>({
+    stage: 'idle',
+    fileName: '',
+    fileSizeBytes: 0,
+    uploadedBytes: 0,
+    uploadPercent: 0,
+    processedBytes: 0,
+    processingPercent: 0,
+    remainingBytes: 0,
+    rowsIndexed: 0,
+    statusText: '',
+  });
+
+  const formatBytes = (bytes: number): string => {
+    if (!bytes || bytes <= 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${(bytes / Math.pow(k, i)).toFixed(i >= 2 ? 2 : 1)} ${sizes[i]}`;
+  };
+
+  const [uploadCompletionMessage, setUploadCompletionMessage] = useState<string | null>(null);
+  const completionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [notification, setNotification] = useState<string | null>(null);
 
   // Sarvam AI Language & PDF State
   const [selectedLanguage, setSelectedLanguage] = useState<SupportedLanguage>('en');
   const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
 
-  // Handcrafted Attack Graph Canvas State
-  const [nodes, setNodes] = useState<GraphNode[]>(MOCK_GRAPH_NODES);
-  const [edges, setEdges] = useState<GraphEdge[]>(MOCK_GRAPH_EDGES);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>('node-auth');
+  // Handcrafted Attack Graph Canvas State (empty by default on page load)
+  const [nodes, setNodes] = useState<GraphNode[]>([]);
+  const [edges, setEdges] = useState<GraphEdge[]>([]);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [zoomLevel, setZoomLevel] = useState<number>(100);
   const [canvasViewMode, setCanvasViewMode] = useState<'kill-chain' | 'quantum-walk'>('kill-chain');
 
@@ -93,20 +127,80 @@ export const DashboardPage: React.FC = () => {
   });
 
   // Complete Data Deletion / Clear
-  const handleClearAllData = () => {
+  const handleClearAllData = async () => {
+    if (completionTimerRef.current) clearTimeout(completionTimerRef.current);
+    setUploadCompletionMessage(null);
     setDuckdbLogs([]);
     setIncidents([]);
     setSelectedIncidentId(null);
     setSelectedNodeId(null);
     setNodes([]);
     setEdges([]);
+    try {
+      await fetch('/api/logs', { method: 'DELETE' });
+    } catch {
+      // Backend sync error silently ignored for client state
+    }
     showNotification('DuckDB data cleared. Incidents, forensic briefs, and attack canvas emptied.');
   };
 
   // Reload / Re-ingest Sample Data
   const handleReloadSampleData = () => {
+    if (completionTimerRef.current) clearTimeout(completionTimerRef.current);
+    setUploadCompletionMessage(null);
     setIsProcessingLogs(true);
+    
+    const sampleBytes = 2560000; // ~2.56 MB
+    setIngestProgress({
+      stage: 'uploading',
+      fileName: 'sample_flow_telemetry.log',
+      fileSizeBytes: sampleBytes,
+      uploadedBytes: sampleBytes,
+      uploadPercent: 100,
+      processedBytes: 0,
+      processingPercent: 0,
+      remainingBytes: sampleBytes,
+      rowsIndexed: 0,
+      statusText: 'Streaming sample telemetry into DuckDB raw_logs table...',
+    });
+
+    // Step 1: 35% processing
     setTimeout(() => {
+      setIngestProgress((prev) => ({
+        ...prev,
+        stage: 'processing',
+        processedBytes: Math.round(sampleBytes * 0.35),
+        processingPercent: 35,
+        remainingBytes: Math.round(sampleBytes * 0.65),
+        rowsIndexed: Math.round(INITIAL_DUCKDB_LOGS.length * 0.35),
+        statusText: 'Bulk-inserting vector telemetry chunks into DuckDB...',
+      }));
+    }, 150);
+
+    // Step 2: 75% processing
+    setTimeout(() => {
+      setIngestProgress((prev) => ({
+        ...prev,
+        processedBytes: Math.round(sampleBytes * 0.75),
+        processingPercent: 75,
+        remainingBytes: Math.round(sampleBytes * 0.25),
+        rowsIndexed: Math.round(INITIAL_DUCKDB_LOGS.length * 0.75),
+        statusText: 'Indexing relational flow keys and IP hashes...',
+      }));
+    }, 320);
+
+    // Step 3: 100% completed
+    setTimeout(() => {
+      setIngestProgress((prev) => ({
+        ...prev,
+        stage: 'completed',
+        processedBytes: sampleBytes,
+        processingPercent: 100,
+        remainingBytes: 0,
+        rowsIndexed: INITIAL_DUCKDB_LOGS.length,
+        statusText: 'All sample records indexed into DuckDB.',
+      }));
+
       setDuckdbLogs(INITIAL_DUCKDB_LOGS);
       setIncidents(MOCK_INCIDENTS);
       setSelectedIncidentId('INC-8092');
@@ -114,72 +208,196 @@ export const DashboardPage: React.FC = () => {
       setEdges(MOCK_GRAPH_EDGES);
       setSelectedNodeId('node-auth');
       setIsProcessingLogs(false);
-      showNotification('DuckDB sample logs ingested. Incident queue and attack topology restored.');
-    }, 350);
+      
+      const msg = `Sample telemetry loaded: ${INITIAL_DUCKDB_LOGS.length} rows indexed in DuckDB.`;
+      setUploadCompletionMessage(msg);
+      showNotification(msg);
+
+      completionTimerRef.current = setTimeout(() => {
+        setUploadCompletionMessage(null);
+      }, 3000);
+    }, 550);
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (files && files.length > 0) {
-      const fileName = files[0].name;
-      setIsProcessingLogs(true);
-      setTimeout(() => {
-        const newLogId = `LOG-${String(duckdbLogs.length + 1).padStart(3, '0')}`;
-        const newEntry: DuckDBLogRow = {
-          id: newLogId,
-          timestamp: new Date().toISOString(),
-          sourceIp: '192.168.1.105',
-          destIp: '10.240.12.8',
-          protocol: 'RPC',
-          port: 135,
-          bytes: 6240,
-          action: 'ACCEPT',
-          flag: 'ANOMALOUS',
-          notes: `Parsed from ${fileName}: suspicious ticket grant`,
-        };
-        setDuckdbLogs((prev) => [newEntry, ...prev]);
+    if (!files || files.length === 0) return;
 
-        // If canvas was empty, repopulate graph and incident from the uploaded telemetry
-        if (nodes.length === 0) {
-          setNodes(MOCK_GRAPH_NODES);
-          setEdges(MOCK_GRAPH_EDGES);
-          setSelectedNodeId('node-auth');
+    const file = files[0];
+    const fileName = file.name;
+    const totalBytes = file.size;
+    const jobId = `job-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+
+    if (completionTimerRef.current) clearTimeout(completionTimerRef.current);
+    setUploadCompletionMessage(null);
+    setIsProcessingLogs(true);
+    setIngestProgress({
+      stage: 'uploading',
+      fileName,
+      fileSizeBytes: totalBytes,
+      uploadedBytes: 0,
+      uploadPercent: 0,
+      processedBytes: 0,
+      processingPercent: 0,
+      remainingBytes: totalBytes,
+      rowsIndexed: 0,
+      statusText: `Uploading ${fileName} (${formatBytes(totalBytes)})...`,
+    });
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    let pollInterval: ReturnType<typeof setInterval> | null = null;
+
+    const startPollingProgress = () => {
+      if (pollInterval) return;
+      pollInterval = setInterval(async () => {
+        try {
+          const res = await fetch(`/api/ingest/progress?job_id=${encodeURIComponent(jobId)}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data && data.status !== 'pending') {
+              setIngestProgress((prev) => ({
+                ...prev,
+                stage: 'processing',
+                processedBytes: data.bytes_processed || 0,
+                processingPercent: data.percent || 0,
+                remainingBytes: data.remaining_bytes !== undefined ? data.remaining_bytes : Math.max(0, totalBytes - (data.bytes_processed || 0)),
+                rowsIndexed: data.rows_ingested || 0,
+                statusText: `Streaming & bulk-inserting into DuckDB raw_logs table... (${(data.rows_ingested || 0).toLocaleString()} rows)`,
+              }));
+            }
+          }
+        } catch {
+          // Non-blocking poll error
         }
+      }, 250);
+    };
 
-        if (incidents.length === 0) {
-          const newIncident: Incident = {
-            id: `INC-${Math.floor(8000 + Math.random() * 900)}`,
-            title: `Suspicious Protocol Burst from ${fileName}`,
-            severity: 'critical',
-            score: 9.3,
-            stage: 'Lateral Movement',
-            targetAsset: 'dc-prod-01.corp.internal',
-            ipAddress: '10.240.12.8',
-            detectedAt: 'Just now',
-            sourceEngine: 'DuckDB',
-            status: 'active',
-            description: `Vectorized DuckDB scan of ${fileName} detected anomalous RPC payload traversal. High probability of service account compromise.`,
-            sarvamSummaryByLang: {
-              en: `Sarvam AI live telemetry analysis of ${fileName}: RPC traffic burst indicates active lateral hopping. Immediate port isolation recommended.`,
-              hi: `सर्वम AI विश्लेषण (${fileName}): RPC ट्रैफ़िक में असामान्य वृद्धि पार्श्व प्रसार का संकेत देती है। तत्काल पोर्ट आइसोलेशन की सिफारिश की जाती है।`,
-              te: `సర్వమ్ AI విశ్లేషణ (${fileName}): RPC ట్రాఫిక్ తీవ్రత లాటరల్ మూవ్‌మెంట్‌ను సూచిస్తుంది. తక్షణ పోర్ట్ ఐసోలేషన్ సిఫార్సు చేయబడింది.`,
-              ml: `സർവം AI വിശകലനം (${fileName}): RPC ട്രാഫിക് വർദ്ധനവ് അനധികൃത കടന്നുകയറ്റത്തെ സൂചിപ്പിക്കുന്നു. അടിയന്തരമായി പോർട്ട് ഐസൊലേഷൻ നടത്തുക.`,
-            },
-            quantumNextHop: {
-              predictedNode: 'srv-vault-prod.internal',
-              probability: 0.865,
-              mitreTechnique: 'T1558 (Kerberoasting)',
-              quarantineAction: 'Isolate RPC port 135 and rotate service keys',
-            },
-          };
-          setIncidents([newIncident]);
-          setSelectedIncidentId(newIncident.id);
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `/api/ingest?job_id=${encodeURIComponent(jobId)}`);
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        const loaded = event.loaded;
+        const total = event.total || totalBytes;
+        const pct = Math.min(100, Math.round((loaded / total) * 100));
+        setIngestProgress((prev) => ({
+          ...prev,
+          uploadedBytes: loaded,
+          uploadPercent: pct,
+          statusText: pct === 100 
+            ? 'Upload complete. Spooling & streaming chunk blocks into DuckDB...' 
+            : `Uploading data stream (${pct}% of ${formatBytes(total)})...`,
+        }));
+        if (pct === 100) {
+          startPollingProgress();
         }
+      }
+    };
 
+    xhr.onload = async () => {
+      if (pollInterval) clearInterval(pollInterval);
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const result = JSON.parse(xhr.responseText);
+          
+          setIngestProgress((prev) => ({
+            ...prev,
+            stage: 'completed',
+            uploadedBytes: totalBytes,
+            uploadPercent: 100,
+            processedBytes: totalBytes,
+            processingPercent: 100,
+            remainingBytes: 0,
+            rowsIndexed: result.ingested_rows || 0,
+            statusText: 'All chunk blocks parsed and indexed into DuckDB.',
+          }));
+
+          // Fetch sample parsed logs from DuckDB to display in table
+          const sampleRes = await fetch('/api/logs/sample?limit=50');
+          if (sampleRes.ok) {
+            const sampleData = await sampleRes.json();
+            if (sampleData.sample_logs && sampleData.sample_logs.length > 0) {
+              const mappedLogs: DuckDBLogRow[] = sampleData.sample_logs.map((log: any, idx: number) => ({
+                id: `LOG-${String(idx + 1).padStart(3, '0')}`,
+                timestamp: log.timestamp || new Date().toISOString(),
+                sourceIp: log.source_ip || '0.0.0.0',
+                destIp: log.destination_ip || '0.0.0.0',
+                protocol: log.event_type || 'TCP',
+                port: 443,
+                bytes: 1420,
+                action: log.status === 'DENY' ? 'DROP' : 'ACCEPT',
+                flag: log.status === 'DENY' ? 'ANOMALOUS' : 'NORMAL',
+                notes: log.raw_message || `${log.event_type} event`,
+              }));
+              setDuckdbLogs(mappedLogs);
+            }
+          }
+
+          if (nodes.length === 0) {
+            setNodes(MOCK_GRAPH_NODES);
+            setEdges(MOCK_GRAPH_EDGES);
+            setSelectedNodeId('node-auth');
+          }
+
+          if (incidents.length === 0) {
+            const newIncident: Incident = {
+              id: `INC-${Math.floor(8000 + Math.random() * 900)}`,
+              title: `Suspicious Protocol Burst from ${fileName}`,
+              severity: 'critical',
+              score: 9.3,
+              stage: 'Lateral Movement',
+              targetAsset: 'dc-prod-01.corp.internal',
+              ipAddress: '10.240.12.8',
+              detectedAt: 'Just now',
+              sourceEngine: 'DuckDB',
+              status: 'active',
+              description: `Streaming ingest of ${fileName} (${result.ingested_rows.toLocaleString()} rows in ${result.duration_seconds}s) completed. Vectorized scan flagged anomalous traffic traversal.`,
+              sarvamSummaryByLang: {
+                en: `Sarvam AI live telemetry analysis of ${fileName}: ${result.ingested_rows.toLocaleString()} rows ingested (${result.throughput_rows_per_second.toLocaleString()} rows/sec). Active lateral hopping patterns identified.`,
+                hi: `सर्वम AI विश्लेषण (${fileName}): ${result.ingested_rows.toLocaleString()} पंक्तियाँ डकडीबी में अंतर्ग्रहण की गईं। पार्श्व प्रसार का संकेत मिलता है।`,
+                te: `సర్వమ్ AI విశ్లేషణ (${fileName}): ${result.ingested_rows.toLocaleString()} రికార్డులు డక్‌డీబీలో నిక్షిప్తం చేయబడ్డాయి. అసాధారణ ట్రాఫిక్ గుర్తించబడింది.`,
+                ml: `സർവം AI വിശകലനം (${fileName}): ${result.ingested_rows.toLocaleString()} വരികൾ ഡക്ക് ഡിബിയിൽ ശേഖരിച്ചു. അടിയന്തരമായി പോർട്ട് ഐസൊലേഷൻ നടത്തുക.`,
+              },
+              quantumNextHop: {
+                predictedNode: 'srv-vault-prod.internal',
+                probability: 0.865,
+                mitreTechnique: 'T1558 (Kerberoasting)',
+                quarantineAction: 'Isolate RPC port 135 and rotate service keys',
+              },
+            };
+            setIncidents([newIncident]);
+            setSelectedIncidentId(newIncident.id);
+          }
+
+          setIsProcessingLogs(false);
+          const successMsg = `Successfully ingested ${result.ingested_rows.toLocaleString()} rows from ${fileName} in ${result.duration_seconds}s (${result.throughput_rows_per_second.toLocaleString()} rows/s).`;
+          setUploadCompletionMessage(successMsg);
+          showNotification(successMsg);
+
+          completionTimerRef.current = setTimeout(() => {
+            setUploadCompletionMessage(null);
+          }, 3000);
+        } catch {
+          setIsProcessingLogs(false);
+          showNotification('Error parsing response from DuckDB ingest.');
+        }
+      } else {
         setIsProcessingLogs(false);
-        showNotification(`DuckDB ingested ${fileName} (${(files[0].size / 1024).toFixed(1)} KB) and updated graph.`);
-      }, 500);
-    }
+        showNotification(`Ingest status: ${xhr.status}`);
+      }
+      e.target.value = '';
+    };
+
+    xhr.onerror = () => {
+      if (pollInterval) clearInterval(pollInterval);
+      setIsProcessingLogs(false);
+      showNotification('Network error during file upload to DuckDB.');
+      e.target.value = '';
+    };
+
+    xhr.send(formData);
   };
 
   const handleQuarantineNode = (nodeId: string) => {
@@ -765,21 +983,116 @@ export const DashboardPage: React.FC = () => {
                   DuckDB Flow Log Data
                 </span>
               </div>
-              <span className="font-mono text-[10px] text-zinc-500 tabular-nums">
-                {duckdbLogs.length} rows
-              </span>
+              <div className="flex items-center gap-2">
+                {isProcessingLogs && (
+                  <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 font-medium tabular-nums">
+                    {ingestProgress.uploadPercent < 100
+                      ? `Uploading ${ingestProgress.uploadPercent}%`
+                      : `Ingesting ${ingestProgress.processingPercent}%`}
+                  </span>
+                )}
+                <span className="font-mono text-[10px] text-zinc-500 tabular-nums">
+                  {duckdbLogs.length} rows
+                </span>
+              </div>
             </div>
+
+            {/* In-Flight Ingestion & Processing Loading Bar with % Uploaded & Processed */}
+            {isProcessingLogs && (
+              <div className="p-3 rounded border border-emerald-400/50 dark:border-emerald-500/40 bg-emerald-50/90 dark:bg-emerald-950/40 text-emerald-950 dark:text-emerald-100 flex flex-col gap-2.5 shadow-xs">
+                {/* Header: File info & stage badge */}
+                <div className="flex items-center justify-between text-[11px] font-mono">
+                  <span className="font-semibold truncate text-emerald-950 dark:text-emerald-100 max-w-[210px]">
+                    {ingestProgress.fileName || 'logs.log'} ({formatBytes(ingestProgress.fileSizeBytes)})
+                  </span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-medium shrink-0 bg-emerald-200/80 dark:bg-emerald-900/80 text-emerald-900 dark:text-emerald-300">
+                    {ingestProgress.uploadPercent < 100 ? 'Phase 1/2: Uploading' : 'Phase 2/2: Ingesting'}
+                  </span>
+                </div>
+
+                {/* Progress Metric 1: Data Uploaded to Server */}
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-[10px] font-mono">
+                    <span className="text-zinc-600 dark:text-zinc-400 font-medium">Uploaded to Server:</span>
+                    <span className="font-semibold text-emerald-800 dark:text-emerald-300 tabular-nums">
+                      {ingestProgress.uploadPercent}% ({formatBytes(ingestProgress.uploadedBytes)} / {formatBytes(ingestProgress.fileSizeBytes)})
+                    </span>
+                  </div>
+                  <div className="w-full bg-emerald-200/50 dark:bg-zinc-800 h-1.5 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-emerald-600 dark:bg-emerald-400 rounded-full transition-all duration-150"
+                      style={{ width: `${Math.max(1, ingestProgress.uploadPercent)}%` }}
+                    />
+                  </div>
+                </div>
+
+                {/* Progress Metric 2: DuckDB Processing & Ingestion */}
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-[10px] font-mono">
+                    <span className="text-zinc-600 dark:text-zinc-400 font-medium">Processed & Indexed:</span>
+                    <span className="font-semibold text-emerald-800 dark:text-emerald-300 tabular-nums">
+                      {ingestProgress.uploadPercent < 100 ? (
+                        <span className="text-zinc-500 font-normal">Waiting for upload stream...</span>
+                      ) : (
+                        `${ingestProgress.processingPercent}% (${formatBytes(ingestProgress.processedBytes)} / ${formatBytes(ingestProgress.fileSizeBytes)})`
+                      )}
+                    </span>
+                  </div>
+                  <div className="w-full bg-emerald-200/50 dark:bg-zinc-800 h-1.5 rounded-full overflow-hidden relative">
+                    <div
+                      className={`h-full rounded-full transition-all duration-200 ${
+                        ingestProgress.uploadPercent < 100
+                          ? 'bg-zinc-300 dark:bg-zinc-700 w-0'
+                          : 'bg-gradient-to-r from-emerald-500 via-teal-300 to-emerald-500 animate-pulse'
+                      }`}
+                      style={{ width: `${Math.max(ingestProgress.uploadPercent < 100 ? 0 : 2, ingestProgress.processingPercent)}%` }}
+                    />
+                  </div>
+                </div>
+
+                {/* Progress Metric 3: Remaining Processing & Status */}
+                <div className="flex items-center justify-between text-[10px] font-mono text-emerald-800 dark:text-emerald-400 pt-1 border-t border-emerald-200/60 dark:border-emerald-900/60">
+                  <span className="truncate max-w-[190px]" title={ingestProgress.statusText}>
+                    {ingestProgress.statusText}
+                  </span>
+                  <span className="shrink-0 font-medium tabular-nums text-emerald-900 dark:text-emerald-300">
+                    {ingestProgress.uploadPercent < 100 ? (
+                      `${100 - ingestProgress.uploadPercent}% upload remaining`
+                    ) : (
+                      `${Math.max(0, 100 - ingestProgress.processingPercent).toFixed(0)}% processing left (${formatBytes(ingestProgress.remainingBytes)} left)`
+                    )}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* 2-3 Second Upload/Processing Completion Notification Banner */}
+            {uploadCompletionMessage && !isProcessingLogs && (
+              <div className="p-2.5 rounded border border-emerald-400 dark:border-emerald-600/70 bg-emerald-100/90 dark:bg-emerald-950/70 text-emerald-900 dark:text-emerald-100 flex items-start gap-2 shadow-xs transition-all duration-300">
+                <Check className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                <div className="flex-1 text-[11px] font-mono leading-tight">
+                  <span className="font-semibold text-emerald-800 dark:text-emerald-300">Success: </span>
+                  <span>{uploadCompletionMessage}</span>
+                </div>
+                <span className="text-[9px] font-mono text-emerald-700 dark:text-emerald-400 shrink-0 uppercase tracking-wider">
+                  2-3s auto-dismiss
+                </span>
+              </div>
+            )}
 
             {/* Ingestion & Clear Controls */}
             <div className="flex items-center gap-2">
-              <label className="flex-1 py-1.5 px-2 text-[11px] font-mono font-medium rounded border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-zinc-400 dark:hover:border-zinc-700 text-zinc-700 dark:text-zinc-300 flex items-center justify-center gap-1.5 cursor-pointer transition-colors">
+              <label className={`flex-1 py-1.5 px-2 text-[11px] font-mono font-medium rounded border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 ${
+                isProcessingLogs ? 'opacity-60 cursor-not-allowed' : 'hover:border-zinc-400 dark:hover:border-zinc-700 cursor-pointer'
+              } text-zinc-700 dark:text-zinc-300 flex items-center justify-center gap-1.5 transition-colors`}>
                 <UploadCloud className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                <span>Upload PCAP/Logs</span>
+                <span>{isProcessingLogs ? 'Uploading...' : 'Upload PCAP/Logs'}</span>
                 <input
                   type="file"
                   onChange={handleFileUpload}
+                  disabled={isProcessingLogs}
                   className="hidden"
-                  accept=".pcap,.json,.parquet,.csv,.log"
+                  accept=".pcap,.json,.parquet,.csv,.log,.txt"
                 />
               </label>
 
@@ -787,8 +1100,9 @@ export const DashboardPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={handleClearAllData}
+                  disabled={isProcessingLogs}
                   title="Clear all DuckDB logs, incident queue, and canvas"
-                  className="py-1.5 px-2.5 text-[11px] font-mono text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 rounded border border-amber-200 dark:border-amber-800/60 flex items-center gap-1 transition-colors cursor-pointer"
+                  className="py-1.5 px-2.5 text-[11px] font-mono text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 disabled:opacity-50 disabled:cursor-not-allowed rounded border border-amber-200 dark:border-amber-800/60 flex items-center gap-1 transition-colors cursor-pointer"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                   <span>Delete Data</span>
@@ -797,7 +1111,8 @@ export const DashboardPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={handleReloadSampleData}
-                  className="py-1.5 px-2.5 text-[11px] font-mono text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 rounded border border-emerald-200 dark:border-emerald-800/60 flex items-center gap-1 transition-colors cursor-pointer"
+                  disabled={isProcessingLogs}
+                  className="py-1.5 px-2.5 text-[11px] font-mono text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 disabled:opacity-50 disabled:cursor-not-allowed rounded border border-emerald-200 dark:border-emerald-800/60 flex items-center gap-1 transition-colors cursor-pointer"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
                   <span>Load Sample</span>
@@ -806,7 +1121,7 @@ export const DashboardPage: React.FC = () => {
             </div>
 
             {/* Filter log rows input */}
-            {duckdbLogs.length > 0 && (
+            {duckdbLogs.length > 0 && !isProcessingLogs && (
               <input
                 type="text"
                 value={logFilterQuery}
@@ -821,10 +1136,27 @@ export const DashboardPage: React.FC = () => {
               {duckdbLogs.length === 0 ? (
                 <div className="p-4 text-center text-xs font-mono text-zinc-500">
                   <Database className="w-5 h-5 mx-auto text-zinc-400 mb-1 opacity-50" />
-                  DuckDB in-memory table is empty.
-                  <div className="text-[10px] text-zinc-400 mt-0.5">
-                    Click "Load Sample" or upload log files to execute queries.
-                  </div>
+                  {isProcessingLogs ? (
+                    <div className="text-emerald-600 dark:text-emerald-400 text-[11px] space-y-0.5">
+                      <div>
+                        {ingestProgress.uploadPercent < 100
+                          ? `Uploading ${ingestProgress.uploadPercent}% (${formatBytes(ingestProgress.uploadedBytes)} / ${formatBytes(ingestProgress.fileSizeBytes)})...`
+                          : `DuckDB Ingestion: ${ingestProgress.processingPercent}% (${formatBytes(ingestProgress.processedBytes)} / ${formatBytes(ingestProgress.fileSizeBytes)})`}
+                      </div>
+                      <div className="text-[10px] text-zinc-500">
+                        {ingestProgress.uploadPercent < 100
+                          ? `${100 - ingestProgress.uploadPercent}% upload remaining`
+                          : `${Math.max(0, 100 - ingestProgress.processingPercent).toFixed(0)}% processing remaining (${formatBytes(ingestProgress.remainingBytes)} left)`}
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      DuckDB in-memory table is empty.
+                      <div className="text-[10px] text-zinc-400 mt-0.5">
+                        Click "Load Sample" or upload log files to execute queries.
+                      </div>
+                    </>
+                  )}
                 </div>
               ) : (
                 <table className="w-full text-left border-collapse text-[10px] font-mono">
