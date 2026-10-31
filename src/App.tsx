@@ -14,7 +14,7 @@ export default function App() {
   const [activePage, setActivePage] = useState<PageView>('landing');
   const [isDark, setIsDark] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem('mitigata_theme');
+      const stored = localStorage.getItem('ask_theme') || localStorage.getItem('mitigata_theme');
       if (stored) return stored === 'dark';
       return true; // default dark for cybersecurity command center
     }
@@ -25,10 +25,10 @@ export default function App() {
     const root = document.documentElement;
     if (isDark) {
       root.classList.add('dark');
-      localStorage.setItem('mitigata_theme', 'dark');
+      localStorage.setItem('ask_theme', 'dark');
     } else {
       root.classList.remove('dark');
-      localStorage.setItem('mitigata_theme', 'light');
+      localStorage.setItem('ask_theme', 'light');
     }
   }, [isDark]);
 

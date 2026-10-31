@@ -26,10 +26,10 @@ export const Navbar: React.FC<NavbarProps> = ({
           <img
             src="/logo.png"
             alt="ASK Logo"
-            className="w-8 h-8 rounded object-contain border border-zinc-200 dark:border-zinc-700 bg-white"
+            className="w-8 h-8 object-contain"
           />
           <span className="text-base font-bold tracking-tight text-zinc-900 dark:text-zinc-100 font-sans whitespace-nowrap">
-            Mitigata
+            ASK
           </span>
         </button>
 

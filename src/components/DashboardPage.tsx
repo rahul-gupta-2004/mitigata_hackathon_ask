@@ -1033,7 +1033,7 @@ export const DashboardPage: React.FC = () => {
               <div className="border-b border-zinc-200 dark:border-zinc-800 pb-4 flex items-center justify-between">
                 <div>
                   <h2 className="text-lg font-bold tracking-tight text-zinc-950 dark:text-zinc-50">
-                    MITIGATA INCIDENT TELEMETRY REPORT
+                    ASK INCIDENT TELEMETRY REPORT
                   </h2>
                   <div className="text-xs font-mono text-zinc-500 dark:text-zinc-400 mt-0.5">
                     Document Ref: {activeIncident.id}-SARVAM-{selectedLanguage.toUpperCase()} · Generated: {new Date().toUTCString()}

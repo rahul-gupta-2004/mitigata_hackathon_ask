@@ -1,5 +1,5 @@
 {
-  "name": "Mitigata Cybersecurity Dashboard",
+  "name": "ASK Cybersecurity Dashboard",
   "description": "Minimal, premium cybersecurity hackathon dashboard with kill chain path analysis, Qiskit quantum next-hop look-aheads, and Sarvam AI reporting.",
   "requestFramePermissions": [],
   "majorCapabilities": [

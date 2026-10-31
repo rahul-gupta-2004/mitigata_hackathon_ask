@@ -27,7 +27,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
           {/* Concise subtitle on kill chain path analysis */}
           <p className="mt-6 text-lg sm:text-xl text-zinc-600 dark:text-zinc-400 font-normal leading-relaxed text-balance">
             Deterministic graph traversal meets quantum statevector look-aheads.
-            Mitigata pinpoints lateral threat vectors across complex multi-cloud topology
+            ASK pinpoints lateral threat vectors across complex multi-cloud topology
             and severs adversarial kill chains before privilege escalation can execute.
           </p>
 
